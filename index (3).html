@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Path Maker — Collaborative Story Builder</title>
+<style>
+  :root{
+    --bg: #eef1f5;
+    --panel: #1c2230;
+    --panel-text: #f4f6fa;
+    --accent: #3b82f6;
+    --accent-dark: #2563eb;
+    --out: #16a34a;
+    --danger: #dc2626;
+    --danger-dark: #b91c1c;
+    --line: #d7dce3;
+    --wire: #3b82f6;
+    --wire-selected: #dc2626;
+    --draft: #f59e0b;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%; width:100%; overflow:hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color:#1c2230;
+  }
+  #app{ display:flex; flex-direction:column; height:100vh; }
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    background: var(--panel);
+    color: var(--panel-text);
+    padding: 10px 16px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    flex-wrap:wrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    z-index: 20;
+    position:relative;
+  }
+  #topbar .field{ display:flex; flex-direction:column; gap:2px; }
+  #topbar label{ font-size:10px; text-transform:uppercase; letter-spacing:0.05em; opacity:0.65; }
+  #topbar input[type=text]{
+    background:#2a3244; border:1px solid #3a4358; color:#fff; border-radius:6px;
+    padding:6px 8px; font-size:13px; min-width:160px;
+  }
+  #titleField input{ min-width:220px; font-weight:600; }
+  #descField input{ min-width:320px; }
+  #topbar .spacer{ flex:1; }
+  .btn{
+    background:#2a3244; color:#fff; border:1px solid #3a4358; border-radius:6px;
+    padding:8px 12px; font-size:13px; cursor:pointer; white-space:nowrap;
+  }
+  .btn:hover{ background:#343e54; }
+  .btn.primary{ background: var(--accent); border-color: var(--accent-dark); }
+  .btn.primary:hover{ background: var(--accent-dark); }
+  .btn.danger{ background: var(--danger); border-color: var(--danger-dark); }
+  .btn.danger:hover{ background: var(--danger-dark); }
+
+  /* ---------- Main layout ---------- */
+  #main{ flex:1; display:flex; min-height:0; }
+
+  #palette{
+    width: 160px;
+    background:#f7f8fa;
+    border-right: 1px solid var(--line);
+    padding: 14px 10px;
+    flex-shrink:0;
+  }
+  #palette h3{ font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:#667; margin:0 0 10px 2px; }
+  .palette-item{
+    background:#fff; border:2px dashed #9db3d9; border-radius:8px;
+    padding:14px 8px; text-align:center; font-size:13px; font-weight:600;
+    color: var(--accent-dark); cursor:grab; user-select:none;
+  }
+  .palette-item:active{ cursor:grabbing; }
+  #palette .hint{ font-size:11.5px; color:#667; margin-top:14px; line-height:1.5; }
+
+  #canvas-wrapper{
+    flex:1; position:relative; overflow:auto;
+    background-color:#f2f4f8;
+    background-image: radial-gradient(#d6dce5 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  #canvas{
+    position:relative;
+    width:3600px; height:2400px;
+  }
+  #svg-layer{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+  #svg-layer path.wire-hit{ pointer-events:stroke; cursor:pointer; }
+
+  /* ---------- Blocks ---------- */
+  .block{
+    position:absolute;
+    width:260px;
+    background:#fff;
+    border:1px solid #c7cedb;
+    border-radius:10px;
+    box-shadow: 0 2px 6px rgba(20,30,50,0.12);
+    padding:10px;
+    z-index:2;
+    cursor:grab;
+    user-select:none;
+  }
+  .block.selected{ outline: 3px solid var(--draft); outline-offset:1px; }
+  .block:active{ cursor:grabbing; }
+  .block .row{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .block .row:last-child{ margin-bottom:0; }
+  .block .row label{ font-size:10px; color:#889; width:16px; flex-shrink:0; }
+  .block input[type=text], .block textarea{
+    flex:1; min-width:0; border:1px solid #d5dae2; border-radius:5px;
+    padding:5px 6px; font-size:12.5px; font-family:inherit; cursor:text;
+  }
+  .block textarea{ resize:none; height:48px; line-height:1.35; }
+  .block .title-input{ font-weight:600; font-size:13.5px; }
+  .block .headline{ font-size:11px; font-weight:700; color:#9aa2b1; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px;}
+  .port{
+    width:14px; height:14px; border-radius:50%; flex-shrink:0; cursor:pointer;
+    border:2px solid #fff; box-shadow:0 0 0 1.5px #99a3b3;
+  }
+  .port.in{ background: var(--accent); }
+  .port.out{ background: var(--out); }
+  .port:hover{ transform:scale(1.25); }
+  .port.active-draft{ box-shadow:0 0 0 3px var(--draft); }
+
+  .start-block{
+    width:150px;
+    background: var(--panel);
+    color:#fff;
+    border-radius:10px;
+    padding:12px;
+    position:absolute;
+    z-index:2;
+    cursor:grab;
+    box-shadow: 0 2px 6px rgba(20,30,50,0.25);
+  }
+  .start-block:active{ cursor:grabbing; }
+  .start-block .row{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .start-block .label{ font-weight:700; letter-spacing:.05em; font-size:12.5px; }
+
+  /* ---------- Delete button ---------- */
+  #deleteBtn{
+    position:fixed; right:20px; bottom:20px; z-index:50;
+    background: var(--danger); color:#fff; border:none; border-radius:8px;
+    padding:12px 18px; font-size:14px; font-weight:600; cursor:pointer;
+    box-shadow:0 4px 14px rgba(0,0,0,0.3);
+    display:none;
+  }
+  #deleteBtn.visible{ display:block; }
+  #deleteBtn:hover{ background: var(--danger-dark); }
+
+  /* ---------- Modal ---------- */
+  #modalOverlay{
+    position:fixed; inset:0; background:rgba(15,20,30,0.55);
+    display:none; align-items:center; justify-content:center; z-index:100;
+  }
+  #modalOverlay.visible{ display:flex; }
+  #modalBox{
+    background:#fff; border-radius:10px; padding:24px; width:320px;
+    box-shadow:0 10px 40px rgba(0,0,0,0.35);
+  }
+  #modalBox h3{ margin:0 0 12px 0; font-size:16px; }
+  #modalBox input[type=password]{
+    width:100%; padding:9px 10px; font-size:14px; border:1px solid #ccd2dc; border-radius:6px; margin-bottom:14px;
+  }
+  #modalBox .modal-actions{ display:flex; justify-content:flex-end; gap:8px; }
+  #modalBox .modal-actions button{ padding:8px 14px; border-radius:6px; border:none; cursor:pointer; font-size:13px; }
+  #modalCancel{ background:#e5e8ee; color:#333; }
+  #modalSubmit{ background: var(--accent); color:#fff; font-weight:600; }
+
+  /* ---------- Toast ---------- */
+  #toast{
+    position:fixed; left:50%; top:16px; transform:translateX(-50%);
+    background:#1c2230; color:#fff; padding:10px 18px; border-radius:8px;
+    font-size:13.5px; z-index:200; opacity:0; pointer-events:none;
+    transition: opacity 0.25s ease, top 0.25s ease;
+    box-shadow:0 6px 20px rgba(0,0,0,0.3);
+    max-width:70vw;
+  }
+  #toast.show{ opacity:1; top:26px; }
+  #toast.error{ background: var(--danger); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar">
+    <div class="field" id="titleField">
+      <label for="projTitle">Story title</label>
+      <input type="text" id="projTitle" placeholder="Untitled Story">
+    </div>
+    <div class="field" id="descField">
+      <label for="projDesc">Story description</label>
+      <input type="text" id="projDesc" placeholder="One-line description...">
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="importBtn">Import project</button>
+    <input type="file" id="importInput" accept=".json,application/json" style="display:none">
+    <button class="btn" id="exportProjectBtn">Export project</button>
+    <button class="btn" id="exportStoryBtn">Export story</button>
+    <button class="btn primary" id="saveBtn">Save changes</button>
+  </div>
+
+  <div id="main">
+    <div id="palette">
+      <h3>Add</h3>
+      <div class="palette-item" id="paletteBlock" draggable="true">+ Story block<br>(drag onto canvas)</div>
+      <div class="hint">
+        Click a node, then click another node to connect them.<br><br>
+        Click empty canvas while wiring to add a bend point.<br><br>
+        Press <b>Backspace</b> to cancel a wire you're drawing.<br><br>
+        Click a block or wire to select it, then use the Delete button (bottom-right) to remove it.
+      </div>
+    </div>
+    <div id="canvas-wrapper">
+      <div id="canvas">
+        <svg id="svg-layer"></svg>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<button id="deleteBtn">Delete selected</button>
+
+<div id="modalOverlay">
+  <div id="modalBox">
+    <h3>Enter password to save</h3>
+    <input type="password" id="modalPassword" placeholder="Password" autocomplete="off">
+    <div class="modal-actions">
+      <button id="modalCancel">Cancel</button>
+      <button id="modalSubmit">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =========================================================
+     CONFIG — update this to your deployed Cloudflare Worker URL
+     ========================================================= */
+  const API_BASE = "https://hufferbackend.superolzu.workers.dev";
+
+  /* =========================================================
+     STATE
+     ========================================================= */
+  let project = null;               // { title, description, blocks:[], connections:[] }
+  const blockEls = new Map();       // blockId -> DOM element
+  let blockCounter = 1;
+  let connCounter = 1;
+
+  let wireDraft = null;             // { startBlockId, startPort, startIsOut, points:[{x,y}] }
+  let lastMouse = null;             // last mouse position in canvas coords (for draft preview)
+  let selected = null;              // { type:'block'|'connection', id }
+  let dragInfo = null;              // { id, startX, startY, origX, origY }
+  let rafPending = false;
+
+  const svgNS = "http://www.w3.org/2000/svg";
+
+  /* =========================================================
+     DOM REFS
+     ========================================================= */
+  const canvasEl = document.getElementById("canvas");
+  const canvasWrapperEl = document.getElementById("canvas-wrapper");
+  const svgLayer = document.getElementById("svg-layer");
+  const deleteBtn = document.getElementById("deleteBtn");
+  const projTitleInput = document.getElementById("projTitle");
+  const projDescInput = document.getElementById("projDesc");
+  const toastEl = document.getElementById("toast");
+
+  svgLayer.setAttribute("width", "3600");
+  svgLayer.setAttribute("height", "2400");
+
+  /* =========================================================
+     UTILITIES
+     ========================================================= */
+  function toast(msg, isError){
+    toastEl.textContent = msg;
+    toastEl.classList.toggle("error", !!isError);
+    toastEl.classList.add("show");
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 3200);
+  }
+
+  function slugify(s){
+    return (s || "story").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "story";
+  }
+
+  function triggerDownload(content, filename){
+    const blob = new Blob([content], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=> URL.revokeObjectURL(url), 1000);
+  }
+
+  function canvasPosFromEvent(e){
+    const rect = canvasEl.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function getPortPos(blockId, port){
+    const el = blockEls.get(blockId);
+    if (!el) return null;
+    const portEl = el.querySelector('[data-port="' + port + '"]');
+    if (!portEl) return null;
+    const canvasRect = canvasEl.getBoundingClientRect();
+    const portRect = portEl.getBoundingClientRect();
+    return {
+      x: portRect.left + portRect.width/2 - canvasRect.left,
+      y: portRect.top + portRect.height/2 - canvasRect.top
+    };
+  }
+
+  function makeSvgPath(d, opts){
+    const p = document.createElementNS(svgNS, "path");
+    p.setAttribute("d", d);
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", opts.stroke || "#000");
+    p.setAttribute("stroke-width", opts.strokeWidth || 2);
+    p.setAttribute("stroke-linecap", "round");
+    if (opts.dash) p.setAttribute("stroke-dasharray", opts.dash);
+    return p;
+  }
+
+  function buildPath(points){
+    if (points.length < 2) return "";
+    let d = "M " + points[0].x + " " + points[0].y + " ";
+    for (let i=0; i<points.length-1; i++){
+      const p0 = points[i], p1 = points[i+1];
+      const dx = (p1.x - p0.x) * 0.5;
+      const c1x = p0.x + dx, c1y = p0.y;
+      const c2x = p1.x - dx, c2y = p1.y;
+      d += "C " + c1x + " " + c1y + ", " + c2x + " " + c2y + ", " + p1.x + " " + p1.y + " ";
+    }
+    return d;
+  }
+
+  function getBlock(id){ return project.blocks.find(b=>b.id===id); }
+
+  /* =========================================================
+     DEFAULT / NORMALIZE PROJECT
+     ========================================================= */
+  function defaultProject(){
+    return {
+      title: "My Story",
+      description: "",
+      blocks: [
+        { id:"start", isStart:true, x:40, y:260 }
+      ],
+      connections: []
+    };
+  }
+
+  function normalizeProject(data){
+    const p = {
+      title: (data && data.title) || "",
+      description: (data && data.description) || "",
+      blocks: Array.isArray(data && data.blocks) ? data.blocks : [],
+      connections: Array.isArray(data && data.connections) ? data.connections : []
+    };
+    // ensure a start block exists
+    if (!p.blocks.some(b=>b.isStart)){
+      p.blocks.push({ id:"start", isStart:true, x:40, y:260 });
+    }
+    // ensure numeric coordinates & required text fields
+    p.blocks.forEach(b=>{
+      b.x = Number(b.x)||0; b.y = Number(b.y)||0;
+      if (!b.isStart){
+        b.title = b.title || "";
+        b.description = b.description || "";
+        b.question = b.question || "";
+        b.opt1 = b.opt1 || "";
+        b.opt2 = b.opt2 || "";
+      }
+    });
+    p.connections.forEach(c=>{ if (!Array.isArray(c.bends)) c.bends = []; });
+    return p;
+  }
+
+  /* =========================================================
+     BLOCK CREATION (DOM)
+     ========================================================= */
+  function createBlockElement(block){
+    const el = document.createElement("div");
+    el.className = "block";
+    el.dataset.id = block.id;
+    el.style.left = block.x + "px";
+    el.style.top = block.y + "px";
+
+    el.innerHTML =
+      '<div class="row">' +
+        '<div class="port in" data-port="in" title="Connect a path into this block"></div>' +
+        '<input type="text" class="title-input" data-field="title" placeholder="Slide title" value="">' +
+      '</div>' +
+      '<div class="row"><label>Desc</label><textarea data-field="description" placeholder="What happens here..."></textarea></div>' +
+      '<div class="row"><label>Q</label><input type="text" data-field="question" placeholder="Question posed to the reader"></div>' +
+      '<div class="row">' +
+        '<input type="text" data-field="opt1" placeholder="Option 1 text">' +
+        '<div class="port out" data-port="out1" title="Where option 1 leads"></div>' +
+      '</div>' +
+      '<div class="row">' +
+        '<input type="text" data-field="opt2" placeholder="Option 2 text">' +
+        '<div class="port out" data-port="out2" title="Where option 2 leads"></div>' +
+      '</div>';
+
+    el.querySelector('[data-field="title"]').value = block.title || "";
+    el.querySelector('[data-field="description"]').value = block.description || "";
+    el.querySelector('[data-field="question"]').value = block.question || "";
+    el.querySelector('[data-field="opt1"]').value = block.opt1 || "";
+    el.querySelector('[data-field="opt2"]').value = block.opt2 || "";
+
+    ["title","description","question","opt1","opt2"].forEach(f=>{
+      el.querySelector('[data-field="'+f+'"]').addEventListener("input", e=>{
+        block[f] = e.target.value;
+      });
+    });
+
+    el.querySelectorAll(".port").forEach(portEl=>{
+      portEl.addEventListener("click", e=>{
+        e.stopPropagation();
+        handlePortClick(block.id, portEl.dataset.port);
+      });
+    });
+
+    attachBlockDrag(el, block);
+    return el;
+  }
+
+  function createStartElement(block){
+    const el = document.createElement("div");
+    el.className = "start-block";
+    el.dataset.id = block.id;
+    el.style.left = block.x + "px";
+    el.style.top = block.y + "px";
+    el.innerHTML =
+      '<div class="row">' +
+        '<span class="label">START</span>' +
+        '<div class="port out" data-port="out" title="Connect to the first slide"></div>' +
+      '</div>';
+    el.querySelector(".port").addEventListener("click", e=>{
+      e.stopPropagation();
+      handlePortClick(block.id, "out");
+    });
+    attachBlockDrag(el, block);
+    return el;
+  }
+
+  function attachBlockDrag(el, block){
+    el.addEventListener("mousedown", e=>{
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.target.classList.contains("port")) return;
+      if (wireDraft) return;
+      e.preventDefault();
+      dragInfo = { id: block.id, startX: e.clientX, startY: e.clientY, origX: block.x, origY: block.y, moved:false };
+      document.addEventListener("mousemove", onBlockDragMove);
+      document.addEventListener("mouseup", onBlockDragEnd);
+    });
+  }
+
+  function onBlockDragMove(e){
+    if (!dragInfo) return;
+    const dx = e.clientX - dragInfo.startX;
+    const dy = e.clientY - dragInfo.startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragInfo.moved = true;
+    const block = getBlock(dragInfo.id);
+    if (!block) return;
+    block.x = Math.max(0, dragInfo.origX + dx);
+    block.y = Math.max(0, dragInfo.origY + dy);
+    const el = blockEls.get(block.id);
+    el.style.left = block.x + "px";
+    el.style.top = block.y + "px";
+    renderConnections();
+  }
+
+  function onBlockDragEnd(){
+    document.removeEventListener("mousemove", onBlockDragMove);
+    document.removeEventListener("mouseup", onBlockDragEnd);
+    if (dragInfo){
+      const block = getBlock(dragInfo.id);
+      if (block && !block.isStart){
+        selectBlock(block.id);
+      } else {
+        clearSelection();
+      }
+    }
+    dragInfo = null;
+  }
+
+  function addBlock(x, y){
+    const id = "b" + (blockCounter++);
+    const block = { id, x, y, title:"New Slide", description:"", question:"", opt1:"Option 1", opt2:"Option 2" };
+    project.blocks.push(block);
+    const el = createBlockElement(block);
+    canvasEl.appendChild(el);
+    blockEls.set(id, el);
+    return block;
+  }
+
+  function removeBlock(id){
+    const block = getBlock(id);
+    if (!block || block.isStart) return;
+    project.blocks = project.blocks.filter(b=>b.id!==id);
+    project.connections = project.connections.filter(c=> c.from.blockId!==id && c.to.blockId!==id);
+    const el = blockEls.get(id);
+    if (el) el.remove();
+    blockEls.delete(id);
+    renderConnections();
+  }
+
+  /* =========================================================
+     CONNECTIONS / WIRE DRAWING
+     ========================================================= */
+  function handlePortClick(blockId, port){
+    const isOut = (port === "out1" || port === "out2" || port === "out");
+
+    if (!wireDraft){
+      wireDraft = { startBlockId: blockId, startPort: port, startIsOut: isOut, points: [] };
+      lastMouse = getPortPos(blockId, port);
+      renderConnections();
+      return;
+    }
+
+    if (wireDraft.startBlockId === blockId && wireDraft.startPort === port){
+      cancelWireDraft();
+      return;
+    }
+
+    if (isOut === wireDraft.startIsOut){
+      toast("Connect an output (green) to an input (blue).", true);
+      return;
+    }
+    if (blockId === wireDraft.startBlockId){
+      toast("A block can't connect to itself.", true);
+      return;
+    }
+
+    let fromBlockId, fromPort, toBlockId, toPort;
+    if (wireDraft.startIsOut){
+      fromBlockId = wireDraft.startBlockId; fromPort = wireDraft.startPort;
+      toBlockId = blockId; toPort = port;
+    } else {
+      fromBlockId = blockId; fromPort = port;
+      toBlockId = wireDraft.startBlockId; toPort = wireDraft.startPort;
+    }
+
+    createConnection(fromBlockId, fromPort, toBlockId, toPort, wireDraft.points);
+    wireDraft = null;
+    renderConnections();
+  }
+
+  function createConnection(fromBlockId, fromPort, toBlockId, toPort, bends){
+    // an output port can only feed one connection - replace any existing one
+    project.connections = project.connections.filter(c=>
+      !(c.from.blockId===fromBlockId && c.from.port===fromPort)
+    );
+    const conn = {
+      id: "c" + (connCounter++),
+      from: { blockId: fromBlockId, port: fromPort },
+      to: { blockId: toBlockId, port: toPort },
+      bends: bends ? bends.slice() : []
+    };
+    project.connections.push(conn);
+  }
+
+  function cancelWireDraft(){
+    wireDraft = null;
+    renderConnections();
+  }
+
+  function removeConnection(id){
+    project.connections = project.connections.filter(c=>c.id!==id);
+    renderConnections();
+  }
+
+  function renderConnections(){
+    svgLayer.innerHTML = "";
+
+    project.connections.forEach(conn=>{
+      const start = getPortPos(conn.from.blockId, conn.from.port);
+      const end = getPortPos(conn.to.blockId, conn.to.port);
+      if (!start || !end) return;
+      const pts = [start].concat(conn.bends || []).concat([end]);
+      const d = buildPath(pts);
+      const isSelected = selected && selected.type==="connection" && selected.id===conn.id;
+
+      const hit = makeSvgPath(d, { stroke:"transparent", strokeWidth:16 });
+      hit.classList.add("wire-hit");
+      hit.addEventListener("click", e=>{
+        e.stopPropagation();
+        if (wireDraft){
+          wireDraft.points.push(canvasPosFromEvent(e));
+          renderConnections();
+          return;
+        }
+        selectConnection(conn.id);
+      });
+
+      const visible = makeSvgPath(d, {
+        stroke: isSelected ? "#dc2626" : "#3b82f6",
+        strokeWidth: isSelected ? 3 : 2
+      });
+
+      svgLayer.appendChild(hit);
+      svgLayer.appendChild(visible);
+    });
+
+    if (wireDraft){
+      const start = getPortPos(wireDraft.startBlockId, wireDraft.startPort);
+      if (start){
+        const pts = [start].concat(wireDraft.points).concat([lastMouse || start]);
+        const d = buildPath(pts);
+        svgLayer.appendChild(makeSvgPath(d, { stroke:"#f59e0b", strokeWidth:2, dash:"6,4" }));
+        wireDraft.points.forEach(p=>{
+          const c = document.createElementNS(svgNS, "circle");
+          c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", 4);
+          c.setAttribute("fill", "#f59e0b");
+          svgLayer.appendChild(c);
+        });
+      }
+    }
+  }
+
+  /* =========================================================
+     SELECTION / DELETE
+     ========================================================= */
+  function selectBlock(id){
+    selected = { type:"block", id };
+    refreshSelectionVisuals();
+  }
+  function selectConnection(id){
+    selected = { type:"connection", id };
+    refreshSelectionVisuals();
+  }
+  function clearSelection(){
+    selected = null;
+    refreshSelectionVisuals();
+  }
+  function refreshSelectionVisuals(){
+    blockEls.forEach(el=> el.classList.remove("selected"));
+    if (selected && selected.type==="block"){
+      const el = blockEls.get(selected.id);
+      if (el) el.classList.add("selected");
+    }
+    deleteBtn.classList.toggle("visible", !!selected);
+    renderConnections();
+  }
+  function deleteSelected(){
+    if (!selected) return;
+    if (selected.type==="block") removeBlock(selected.id);
+    else removeConnection(selected.id);
+    clearSelection();
+  }
+
+  /* =========================================================
+     CANVAS-LEVEL EVENTS
+     ========================================================= */
+  canvasWrapperEl.addEventListener("click", e=>{
+    if (e.target.closest(".port")) return;
+    if (e.target.closest(".block")) return;
+    if (e.target.closest(".start-block")) return;
+    if (e.target.classList && e.target.classList.contains("wire-hit")) return;
+
+    if (wireDraft){
+      wireDraft.points.push(canvasPosFromEvent(e));
+      renderConnections();
+      return;
+    }
+    clearSelection();
+  });
+
+  document.addEventListener("mousemove", e=>{
+    if (!wireDraft) return;
+    lastMouse = canvasPosFromEvent(e);
+    if (!rafPending){
+      rafPending = true;
+      requestAnimationFrame(()=>{ renderConnections(); rafPending=false; });
+    }
+  });
+
+  document.addEventListener("keydown", e=>{
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (e.key === "Backspace" || e.key === "Delete"){
+      if (wireDraft){ e.preventDefault(); cancelWireDraft(); return; }
+      if (selected){ e.preventDefault(); deleteSelected(); return; }
+    }
+  });
+
+  deleteBtn.addEventListener("click", deleteSelected);
+
+  /* ---- palette drag and drop ---- */
+  document.getElementById("paletteBlock").addEventListener("dragstart", e=>{
+    e.dataTransfer.setData("text/plain", "new-block");
+  });
+  canvasWrapperEl.addEventListener("dragover", e=> e.preventDefault());
+  canvasWrapperEl.addEventListener("drop", e=>{
+    e.preventDefault();
+    const pos = canvasPosFromEvent(e);
+    const block = addBlock(Math.max(0,pos.x-130), Math.max(0,pos.y-20));
+    selectBlock(block.id);
+  });
+
+  /* =========================================================
+     LOAD / RENDER PROJECT
+     ========================================================= */
+  function clearCanvas(){
+    blockEls.forEach(el=>el.remove());
+    blockEls.clear();
+    svgLayer.innerHTML = "";
+  }
+
+  function loadProject(data){
+    clearCanvas();
+    project = normalizeProject(data);
+    selected = null;
+    wireDraft = null;
+
+    // keep id counters ahead of existing ids to avoid collisions
+    let maxB = 0, maxC = 0;
+    project.blocks.forEach(b=>{
+      const m = /^b(\d+)$/.exec(b.id);
+      if (m) maxB = Math.max(maxB, parseInt(m[1],10));
+    });
+    project.connections.forEach(c=>{
+      const m = /^c(\d+)$/.exec(c.id);
+      if (m) maxC = Math.max(maxC, parseInt(m[1],10));
+    });
+    blockCounter = maxB + 1;
+    connCounter = maxC + 1;
+
+    projTitleInput.value = project.title || "";
+    projDescInput.value = project.description || "";
+
+    project.blocks.forEach(b=>{
+      const el = b.isStart ? createStartElement(b) : createBlockElement(b);
+      canvasEl.appendChild(el);
+      blockEls.set(b.id, el);
+    });
+
+    renderConnections();
+  }
+
+  projTitleInput.addEventListener("input", e=> project.title = e.target.value);
+  projDescInput.addEventListener("input", e=> project.description = e.target.value);
+
+  /* =========================================================
+     IMPORT / EXPORT PROJECT
+     ========================================================= */
+  document.getElementById("importBtn").addEventListener("click", ()=>{
+    document.getElementById("importInput").click();
+  });
+  document.getElementById("importInput").addEventListener("change", e=>{
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      try{
+        const data = JSON.parse(reader.result);
+        loadProject(data);
+        toast("Project imported.");
+      }catch(err){
+        toast("Couldn't read that file — is it a valid project JSON?", true);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  });
+
+  document.getElementById("exportProjectBtn").addEventListener("click", ()=>{
+    const dataStr = JSON.stringify(project, null, 2);
+    triggerDownload(dataStr, slugify(project.title) + "-project.json");
+    toast("Project exported.");
+  });
+
+  /* =========================================================
+     EXPORT STORY (final playable JSON)
+     ========================================================= */
+  document.getElementById("exportStoryBtn").addEventListener("click", ()=>{
+    const startConn = project.connections.find(c=>c.from.blockId==="start");
+    if (!startConn){
+      toast("Connect the START node to a block before exporting the story.", true);
+      return;
+    }
+
+    const order = [];
+    const seen = new Set();
+    const queue = [startConn.to.blockId];
+    while (queue.length){
+      const bId = queue.shift();
+      if (seen.has(bId)) continue;
+      seen.add(bId);
+      order.push(bId);
+      ["out1","out2"].forEach(port=>{
+        const c = project.connections.find(x=>x.from.blockId===bId && x.from.port===port);
+        if (c && !seen.has(c.to.blockId)) queue.push(c.to.blockId);
+      });
+    }
+    // append any blocks not reachable from START, in creation order, so nothing made is silently lost
+    project.blocks.forEach(b=>{
+      if (!b.isStart && !seen.has(b.id)){ seen.add(b.id); order.push(b.id); }
+    });
+
+    const idMap = {};
+    order.forEach((bId,i)=> idMap[bId] = i+1);
+
+    const warnings = [];
+    const slides = order.map(bId=>{
+      const b = getBlock(bId);
+      const c1 = project.connections.find(c=>c.from.blockId===bId && c.from.port==="out1");
+      const c2 = project.connections.find(c=>c.from.blockId===bId && c.from.port==="out2");
+      if (!c1 || !c2){
+        warnings.push('"' + (b.title || bId) + '" is missing one or both option links.');
+      }
+      return {
+        id: idMap[bId],
+        title: b.title || "",
+        description: b.description || "",
+        question: b.question || "",
+        button1_text: b.opt1 || "",
+        button1_link: c1 ? idMap[c1.to.blockId] : null,
+        button2_text: b.opt2 || "",
+        button2_link: c2 ? idMap[c2.to.blockId] : null
+      };
+    });
+
+    const storyJson = {
+      title: project.title || "",
+      description: project.description || "",
+      slides
+    };
+
+    triggerDownload(JSON.stringify(storyJson, null, 2), slugify(project.title) + ".json");
+
+    if (warnings.length){
+      toast("Exported with warnings: " + warnings.join(" "), true);
+    } else {
+      toast("Story exported.");
+    }
+  });
+
+  /* =========================================================
+     SAVE (password-protected)
+     ========================================================= */
+  const modalOverlay = document.getElementById("modalOverlay");
+  const modalPassword = document.getElementById("modalPassword");
+
+  document.getElementById("saveBtn").addEventListener("click", ()=>{
+    modalPassword.value = "";
+    modalOverlay.classList.add("visible");
+    setTimeout(()=>modalPassword.focus(), 50);
+  });
+  document.getElementById("modalCancel").addEventListener("click", ()=>{
+    modalOverlay.classList.remove("visible");
+  });
+  modalOverlay.addEventListener("click", e=>{
+    if (e.target === modalOverlay) modalOverlay.classList.remove("visible");
+  });
+  modalPassword.addEventListener("keydown", e=>{
+    if (e.key === "Enter") doSave();
+  });
+  document.getElementById("modalSubmit").addEventListener("click", doSave);
+
+  async function doSave(){
+    const password = modalPassword.value;
+    if (!password){ toast("Enter a password.", true); return; }
+    try{
+      const res = await fetch(API_BASE + "/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, project })
+      });
+      let data = {};
+      try{ data = await res.json(); }catch(e){}
+      if (res.ok && data.success){
+        toast("Saved successfully.");
+        modalOverlay.classList.remove("visible");
+      } else {
+        toast(data.error || "Incorrect password.", true);
+      }
+    }catch(err){
+      toast("Couldn't reach the server. Check API_BASE and your connection.", true);
+    }
+  }
+
+  /* =========================================================
+     INITIAL LOAD
+     ========================================================= */
+  (async function init(){
+    try{
+      const res = await fetch(API_BASE + "/api/project");
+      if (!res.ok) throw new Error("bad status");
+      const data = await res.json();
+      loadProject(data || defaultProject());
+    }catch(err){
+      loadProject(defaultProject());
+      toast("Couldn't load a saved project — starting blank. (Set API_BASE in the code to your Worker URL.)", true);
+    }
+  })();
+
+})();
+</script>
+</body>
+</html>
