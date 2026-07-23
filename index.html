@@ -80,14 +80,19 @@
   #palette .hint{ font-size:11.5px; color:#667; margin-top:14px; line-height:1.5; }
 
   #canvas-wrapper{
-    flex:1; position:relative; overflow:auto;
+    flex:1; position:relative; overflow:hidden;
     background-color:#f2f4f8;
-    background-image: radial-gradient(#d6dce5 1px, transparent 1px);
-    background-size: 22px 22px;
+    cursor: grab;
   }
+  #canvas-wrapper.panning{ cursor: grabbing; }
   #canvas{
     position:relative;
     width:3600px; height:2400px;
+    transform-origin: 0 0;
+    background-color:#f2f4f8;
+    background-image: radial-gradient(#d6dce5 1px, transparent 1px);
+    background-size: 22px 22px;
+    will-change: transform;
   }
   #svg-layer{
     position:absolute; top:0; left:0; width:100%; height:100%;
@@ -282,6 +287,114 @@
   svgLayer.setAttribute("height", "2400");
 
   /* =========================================================
+     VIEW (pan + zoom) — visual only, does not change project data
+     ========================================================= */
+  const view = { x: 0, y: 0, scale: 1 };
+  const MIN_SCALE = 0.2, MAX_SCALE = 2.5;
+  const CANVAS_PAD = 700;       // breathing room kept beyond content/viewport
+  const CANVAS_MIN_W = 3600, CANVAS_MIN_H = 2400;
+
+  function clampView(){
+    // don't allow revealing negative logical space (blocks are clamped to >=0)
+    view.x = Math.min(0, view.x);
+    view.y = Math.min(0, view.y);
+  }
+
+  function getContentBounds(){
+    let maxX = 0, maxY = 0;
+    (project ? project.blocks : []).forEach(b=>{
+      const w = b.isStart ? 170 : 280;
+      const h = b.isStart ? 70 : 230;
+      maxX = Math.max(maxX, b.x + w);
+      maxY = Math.max(maxY, b.y + h);
+    });
+    return { maxX, maxY };
+  }
+
+  function resizeCanvasToFit(){
+    const wrapRect = canvasWrapperEl.getBoundingClientRect();
+    const viewRight = (-view.x + wrapRect.width) / view.scale;
+    const viewBottom = (-view.y + wrapRect.height) / view.scale;
+    const content = getContentBounds();
+    const width = Math.max(CANVAS_MIN_W, content.maxX + CANVAS_PAD, viewRight + CANVAS_PAD);
+    const height = Math.max(CANVAS_MIN_H, content.maxY + CANVAS_PAD, viewBottom + CANVAS_PAD);
+    canvasEl.style.width = width + "px";
+    canvasEl.style.height = height + "px";
+    svgLayer.setAttribute("width", width);
+    svgLayer.setAttribute("height", height);
+  }
+
+  function applyView(){
+    canvasEl.style.transform = "translate(" + view.x + "px," + view.y + "px) scale(" + view.scale + ")";
+    resizeCanvasToFit();
+  }
+
+  /* ---- zoom (scroll wheel) ---- */
+  canvasWrapperEl.addEventListener("wheel", e=>{
+    e.preventDefault();
+    const rect = canvasWrapperEl.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const logicalX = (mouseX - view.x) / view.scale;
+    const logicalY = (mouseY - view.y) / view.scale;
+    const delta = -e.deltaY * 0.0015;
+    let newScale = view.scale * (1 + delta);
+    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+    view.scale = newScale;
+    view.x = mouseX - logicalX * newScale;
+    view.y = mouseY - logicalY * newScale;
+    clampView();
+    applyView();
+  }, { passive:false });
+
+  /* ---- pan (drag background) ---- */
+  let panInfo = null;
+  canvasWrapperEl.addEventListener("mousedown", e=>{
+    if (e.button !== 0) return;
+    if (e.target.closest(".port")) return;
+    if (e.target.closest(".block")) return;
+    if (e.target.closest(".start-block")) return;
+    if (e.target.classList && e.target.classList.contains("wire-hit")) return;
+    panInfo = { startX: e.clientX, startY: e.clientY, origX: view.x, origY: view.y, moved:false };
+    document.addEventListener("mousemove", onPanMove);
+    document.addEventListener("mouseup", onPanEnd);
+  });
+
+  function onPanMove(e){
+    if (!panInfo) return;
+    const dx = e.clientX - panInfo.startX;
+    const dy = e.clientY - panInfo.startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3){
+      if (!panInfo.moved) canvasWrapperEl.classList.add("panning");
+      panInfo.moved = true;
+    }
+    if (panInfo.moved){
+      view.x = panInfo.origX + dx;
+      view.y = panInfo.origY + dy;
+      clampView();
+      applyView();
+    }
+  }
+
+  function onPanEnd(e){
+    document.removeEventListener("mousemove", onPanMove);
+    document.removeEventListener("mouseup", onPanEnd);
+    canvasWrapperEl.classList.remove("panning");
+    if (panInfo && !panInfo.moved){
+      // treat as a plain click on empty canvas
+      if (wireDraft){
+        wireDraft.points.push(canvasPosFromEvent(e));
+        renderConnections();
+      } else {
+        clearSelection();
+      }
+    }
+    panInfo = null;
+  }
+
+  window.addEventListener("resize", ()=> resizeCanvasToFit());
+
+  /* =========================================================
      UTILITIES
      ========================================================= */
   function toast(msg, isError){
@@ -307,7 +420,7 @@
 
   function canvasPosFromEvent(e){
     const rect = canvasEl.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return { x: (e.clientX - rect.left) / view.scale, y: (e.clientY - rect.top) / view.scale };
   }
 
   function getPortPos(blockId, port){
@@ -318,8 +431,8 @@
     const canvasRect = canvasEl.getBoundingClientRect();
     const portRect = portEl.getBoundingClientRect();
     return {
-      x: portRect.left + portRect.width/2 - canvasRect.left,
-      y: portRect.top + portRect.height/2 - canvasRect.top
+      x: (portRect.left + portRect.width/2 - canvasRect.left) / view.scale,
+      y: (portRect.top + portRect.height/2 - canvasRect.top) / view.scale
     };
   }
 
@@ -472,8 +585,8 @@
 
   function onBlockDragMove(e){
     if (!dragInfo) return;
-    const dx = e.clientX - dragInfo.startX;
-    const dy = e.clientY - dragInfo.startY;
+    const dx = (e.clientX - dragInfo.startX) / view.scale;
+    const dy = (e.clientY - dragInfo.startY) / view.scale;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragInfo.moved = true;
     const block = getBlock(dragInfo.id);
     if (!block) return;
@@ -483,6 +596,7 @@
     el.style.left = block.x + "px";
     el.style.top = block.y + "px";
     renderConnections();
+    resizeCanvasToFit();
   }
 
   function onBlockDragEnd(){
@@ -506,6 +620,7 @@
     const el = createBlockElement(block);
     canvasEl.appendChild(el);
     blockEls.set(id, el);
+    resizeCanvasToFit();
     return block;
   }
 
@@ -667,20 +782,6 @@
   /* =========================================================
      CANVAS-LEVEL EVENTS
      ========================================================= */
-  canvasWrapperEl.addEventListener("click", e=>{
-    if (e.target.closest(".port")) return;
-    if (e.target.closest(".block")) return;
-    if (e.target.closest(".start-block")) return;
-    if (e.target.classList && e.target.classList.contains("wire-hit")) return;
-
-    if (wireDraft){
-      wireDraft.points.push(canvasPosFromEvent(e));
-      renderConnections();
-      return;
-    }
-    clearSelection();
-  });
-
   document.addEventListener("mousemove", e=>{
     if (!wireDraft) return;
     lastMouse = canvasPosFromEvent(e);
@@ -751,6 +852,8 @@
     });
 
     renderConnections();
+    view.x = 0; view.y = 0; view.scale = 1;
+    applyView();
   }
 
   projTitleInput.addEventListener("input", e=> project.title = e.target.value);
